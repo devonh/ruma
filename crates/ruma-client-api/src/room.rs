@@ -5,6 +5,7 @@ pub mod create_room;
 pub mod get_event_by_timestamp;
 pub mod get_room_event;
 pub mod report_content;
+pub mod send_pdus;
 pub mod upgrade_room;
 
 use ruma_common::serde::StringEnum;
