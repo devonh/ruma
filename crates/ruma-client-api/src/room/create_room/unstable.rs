@@ -12,7 +12,10 @@ use ruma_events::{
     room::power_levels::RoomPowerLevelsEventContent, AnyInitialStateEvent, AnyTimelineEvent,
 };
 
-use crate::{membership::Invite3pid, room::Visibility};
+use crate::{
+    membership::Invite3pid,
+    room::{create_room, Visibility},
+};
 
 const METADATA: Metadata = metadata! {
     method: POST,
@@ -29,7 +32,7 @@ const METADATA: Metadata = metadata! {
 pub struct Request {
     /// Extra keys to be added to the content of the `m.room.create`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creation_content: Option<Raw<crate::room::create_room::v3::CreationContent>>,
+    pub creation_content: Option<Raw<create_room::v3::CreationContent>>,
 
     /// List of state events to send to the new room.
     ///
@@ -62,7 +65,7 @@ pub struct Request {
 
     /// Convenience parameter for setting various default state events based on a preset.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub preset: Option<crate::room::create_room::v3::RoomPreset>,
+    pub preset: Option<create_room::v3::RoomPreset>,
 
     /// The desired room alias local part.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,8 +93,8 @@ pub struct Request {
     pub sender_id: String,
 }
 
-impl From<crate::room::create_room::v3::Request> for Request {
-    fn from(value: crate::room::create_room::v3::Request) -> Self {
+impl From<create_room::v3::Request> for Request {
+    fn from(value: create_room::v3::Request) -> Self {
         Request {
             creation_content: value.creation_content,
             initial_state: value.initial_state,

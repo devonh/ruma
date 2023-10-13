@@ -2,7 +2,7 @@
 //!
 //! Send a set of PDUs for a room to the homeserver.
 
-pub mod v4 {
+pub mod unstable {
     //! `POST /_matrix/client/unstable/org.matrix.msc_cryptoids/sendPDUs` ([MSC])
     //!
     //! [MSC]: TODO: add msc link
@@ -11,7 +11,7 @@ pub mod v4 {
         api::{request, response, Metadata},
         metadata,
         serde::Raw,
-        RoomVersionId,
+        OwnedServerName, OwnedTransactionId, RoomVersionId,
     };
     use ruma_events::AnyTimelineEvent;
 
@@ -30,6 +30,14 @@ pub mod v4 {
         /// The room ID to get aliases of.
         pub room_version: RoomVersionId,
 
+        /// The remote server to send the event via.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub via_server: Option<OwnedServerName>,
+
+        /// A transaction ID for these events.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub txn_id: Option<OwnedTransactionId>,
+
         /// List of signed events for the homeserver to process.
         pub pdus: Vec<Raw<AnyTimelineEvent>>,
     }
@@ -40,8 +48,13 @@ pub mod v4 {
 
     impl Request {
         /// Creates a new `Request` with the given room ID.
-        pub fn new(room_version: RoomVersionId, pdus: Vec<Raw<AnyTimelineEvent>>) -> Self {
-            Self { room_version, pdus }
+        pub fn new(
+            room_version: RoomVersionId,
+            via_server: Option<OwnedServerName>,
+            txn_id: Option<OwnedTransactionId>,
+            pdus: Vec<Raw<AnyTimelineEvent>>,
+        ) -> Self {
+            Self { room_version, via_server, txn_id, pdus }
         }
     }
 
