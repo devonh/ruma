@@ -659,6 +659,11 @@ pub struct E2EE {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub device_one_time_keys_count: BTreeMap<DeviceKeyAlgorithm, UInt>,
 
+    /// For each pseudoid algorithm, the number of unclaimed one-time pseudoids
+    /// currently held on the server.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub one_time_pseudoids_count: BTreeMap<DeviceKeyAlgorithm, UInt>,
+
     /// For each key algorithm, the number of unclaimed one-time keys
     /// currently held on the server for a device.
     ///
@@ -673,6 +678,7 @@ impl E2EE {
     pub fn is_empty(&self) -> bool {
         self.device_lists.is_empty()
             && self.device_one_time_keys_count.is_empty()
+            && self.one_time_pseudoids_count.is_empty()
             && self.device_unused_fallback_key_types.is_none()
     }
 }
