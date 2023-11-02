@@ -108,8 +108,7 @@ impl From<create_room::v3::Request> for Request {
             room_version: value.room_version,
             topic: value.topic,
             visibility: value.visibility,
-            // TODO: don't hardcode this
-            sender_id: String::from("PFKvhmuW9Hj0WSAkD09J99R0RQU8qlpQZ6vV6uR6B9c"),
+            sender_id: "".to_string(),
         }
     }
 }
