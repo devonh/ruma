@@ -437,6 +437,10 @@ pub struct SlidingSyncRoom {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invite_state: Option<Vec<Raw<AnyStrippedStateEvent>>>,
 
+    /// If this is `Some(_)`, this is the pseudoid associated with this user for this room.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pseudoid: Option<String>,
+
     /// Counts of unread notifications for this room.
     #[serde(flatten, default, skip_serializing_if = "UnreadNotificationsCount::is_empty")]
     pub unread_notifications: UnreadNotificationsCount,
