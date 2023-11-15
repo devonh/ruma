@@ -14,32 +14,52 @@ pub mod unstable {
         OwnedServerName, OwnedTransactionId, RoomVersionId,
     };
     use ruma_events::AnyTimelineEvent;
+    use serde::{Deserialize, Serialize};
 
     const METADATA: Metadata = metadata! {
         method: POST,
         rate_limited: true,
         authentication: AccessToken,
         history: {
-            unstable => "/_matrix/client/unstable/org.matrix.msc_cryptoids/sendPDUs",
+            unstable => "/_matrix/client/unstable/org.matrix.msc_cryptoids/send_pdus/:txn_id",
         }
     };
 
-    /// Request type for the `aliases` endpoint.
-    #[request(error = crate::Error)]
-    pub struct Request {
-        /// The room ID to get aliases of.
-        pub room_version: RoomVersionId,
-
+    /// Request parameters for the `/send_pdus` endpoint.
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    pub struct PDUInfo {
         /// The remote server to send the event via.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub via_server: Option<OwnedServerName>,
 
+        /// The room ID to get aliases of.
+        pub room_version: RoomVersionId,
+
+        /// Signed event for the homeserver to process.
+        pub pdu: Raw<AnyTimelineEvent>,
+    }
+
+    impl PDUInfo {
+        /// Creates a new `PDUInfo` with the provided arguments.
+        pub fn new(
+            via_server: Option<OwnedServerName>,
+            room_version: RoomVersionId,
+            pdu: Raw<AnyTimelineEvent>,
+        ) -> Self {
+            Self { via_server, room_version, pdu }
+        }
+    }
+
+    /// Request type for the `aliases` endpoint.
+    #[request(error = crate::Error)]
+    pub struct Request {
         /// A transaction ID for these events.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub txn_id: Option<OwnedTransactionId>,
+        #[ruma_api(path)]
+        pub txn_id: OwnedTransactionId,
 
         /// List of signed events for the homeserver to process.
-        pub pdus: Vec<Raw<AnyTimelineEvent>>,
+        pub pdus: Vec<PDUInfo>,
     }
 
     /// Response type for the `aliases` endpoint.
@@ -48,13 +68,8 @@ pub mod unstable {
 
     impl Request {
         /// Creates a new `Request` with the given room ID.
-        pub fn new(
-            room_version: RoomVersionId,
-            via_server: Option<OwnedServerName>,
-            txn_id: Option<OwnedTransactionId>,
-            pdus: Vec<Raw<AnyTimelineEvent>>,
-        ) -> Self {
-            Self { room_version, via_server, txn_id, pdus }
+        pub fn new(txn_id: OwnedTransactionId, pdus: Vec<PDUInfo>) -> Self {
+            Self { txn_id, pdus }
         }
     }
 
