@@ -1,4 +1,4 @@
-//! `POST /_matrix/client/unstable/org.matrix.msc_cryptoids/createRoom` ([MSC])
+//! `POST /_matrix/client/unstable/org.matrix.msc4080/createRoom` ([MSC])
 //!
 //! [MSC]: TODO: add msc link
 
@@ -22,7 +22,7 @@ const METADATA: Metadata = metadata! {
     rate_limited: false,
     authentication: AccessToken,
     history: {
-        unstable => "/_matrix/client/unstable/org.matrix.msc_cryptoids/createRoom",
+        unstable => "/_matrix/client/unstable/org.matrix.msc4080/createRoom",
     }
 };
 

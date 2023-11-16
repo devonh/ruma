@@ -17,7 +17,7 @@ const METADATA: Metadata = metadata! {
     rate_limited: true,
     authentication: AccessToken,
     history: {
-        unstable => "/_matrix/client/unstable/org.matrix.msc_cryptoids/join/:room_id_or_alias",
+        unstable => "/_matrix/client/unstable/org.matrix.msc4080/join/:room_id_or_alias",
     }
 };
 

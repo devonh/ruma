@@ -18,7 +18,7 @@ const METADATA: Metadata = metadata! {
     rate_limited: false,
     authentication: AccessToken,
     history: {
-        unstable => "/_matrix/client/unstable/org.matrix.msc_cryptoids/keys/upload",
+        unstable => "/_matrix/client/unstable/org.matrix.msc4080/keys/upload",
     }
 };
 

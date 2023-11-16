@@ -1,9 +1,9 @@
-//! `POST /_matrix/client/unstable/org.matrix.msc_cryptoids/sendPDUs`
+//! `POST /_matrix/client/unstable/org.matrix.msc4080/sendPDUs`
 //!
 //! Send a set of PDUs for a room to the homeserver.
 
 pub mod unstable {
-    //! `POST /_matrix/client/unstable/org.matrix.msc_cryptoids/sendPDUs` ([MSC])
+    //! `POST /_matrix/client/unstable/org.matrix.msc4080/sendPDUs` ([MSC])
     //!
     //! [MSC]: TODO: add msc link
 
@@ -21,7 +21,7 @@ pub mod unstable {
         rate_limited: true,
         authentication: AccessToken,
         history: {
-            unstable => "/_matrix/client/unstable/org.matrix.msc_cryptoids/send_pdus/:txn_id",
+            unstable => "/_matrix/client/unstable/org.matrix.msc4080/send_pdus/:txn_id",
         }
     };
 
