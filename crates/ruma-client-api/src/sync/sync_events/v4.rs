@@ -437,9 +437,9 @@ pub struct SlidingSyncRoom {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invite_state: Option<Vec<Raw<AnyStrippedStateEvent>>>,
 
-    /// If this is `Some(_)`, this is the pseudoid associated with this user for this room.
+    /// If this is `Some(_)`, this is the cryptoid associated with this user for this room.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pseudoid: Option<String>,
+    pub cryptoid: Option<String>,
 
     /// Counts of unread notifications for this room.
     #[serde(flatten, default, skip_serializing_if = "UnreadNotificationsCount::is_empty")]
@@ -663,10 +663,10 @@ pub struct E2EE {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub device_one_time_keys_count: BTreeMap<DeviceKeyAlgorithm, UInt>,
 
-    /// For each pseudoid algorithm, the number of unclaimed one-time pseudoids
+    /// For each cryptoid algorithm, the number of unclaimed one-time cryptoids
     /// currently held on the server.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub one_time_pseudoids_count: BTreeMap<DeviceKeyAlgorithm, UInt>,
+    pub one_time_cryptoids_count: BTreeMap<DeviceKeyAlgorithm, UInt>,
 
     /// For each key algorithm, the number of unclaimed one-time keys
     /// currently held on the server for a device.
@@ -682,7 +682,7 @@ impl E2EE {
     pub fn is_empty(&self) -> bool {
         self.device_lists.is_empty()
             && self.device_one_time_keys_count.is_empty()
-            && self.one_time_pseudoids_count.is_empty()
+            && self.one_time_cryptoids_count.is_empty()
             && self.device_unused_fallback_key_types.is_none()
     }
 }

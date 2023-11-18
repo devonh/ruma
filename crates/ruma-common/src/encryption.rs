@@ -117,13 +117,13 @@ pub enum OneTimeKey {
     Key(String),
 }
 
-/// A one-time pseudoID.
+/// A one-time cryptoID.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
 #[serde(untagged)]
-pub enum OneTimePseudoID {
-    /// A string-valued pseudoID, for the Ed25519 algorithm.
-    PseudoID(String),
+pub enum OneTimeCryptoID {
+    /// A string-valued cryptoID, for the Ed25519 algorithm.
+    CryptoID(String),
 }
 
 /// Signatures for a `CrossSigningKey` object.

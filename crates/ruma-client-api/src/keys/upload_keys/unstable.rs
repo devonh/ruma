@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use js_int::UInt;
 use ruma_common::{
     api::{request, response, Metadata},
-    encryption::{DeviceKeys, OneTimeKey, OneTimePseudoID},
+    encryption::{DeviceKeys, OneTimeCryptoID, OneTimeKey},
     metadata,
     serde::Raw,
     DeviceKeyAlgorithm, OwnedDeviceKeyId,
@@ -36,9 +36,9 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub one_time_keys: BTreeMap<OwnedDeviceKeyId, Raw<OneTimeKey>>,
 
-    /// One-time pseudoIDs for invites.
+    /// One-time cryptoIDs for invites.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub one_time_pseudoids: BTreeMap<OwnedDeviceKeyId, Raw<OneTimePseudoID>>,
+    pub one_time_cryptoids: BTreeMap<OwnedDeviceKeyId, Raw<OneTimeCryptoID>>,
 
     /// Fallback public keys for "pre-key" messages.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -52,9 +52,9 @@ pub struct Response {
     /// type currently held on the server for this device.
     pub one_time_key_counts: BTreeMap<DeviceKeyAlgorithm, UInt>,
 
-    /// For each pseudoID algorithm, the number of unclaimed one-time pseudoIDs of that
+    /// For each cryptoID algorithm, the number of unclaimed one-time cryptoIDs of that
     /// type currently held on the server for this device.
-    pub one_time_pseudoid_counts: BTreeMap<DeviceKeyAlgorithm, UInt>,
+    pub one_time_cryptoid_counts: BTreeMap<DeviceKeyAlgorithm, UInt>,
 }
 
 impl Request {
@@ -68,8 +68,8 @@ impl Response {
     /// Creates a new `Response` with the given one time key counts.
     pub fn new(
         one_time_key_counts: BTreeMap<DeviceKeyAlgorithm, UInt>,
-        one_time_pseudoid_counts: BTreeMap<DeviceKeyAlgorithm, UInt>,
+        one_time_cryptoid_counts: BTreeMap<DeviceKeyAlgorithm, UInt>,
     ) -> Self {
-        Self { one_time_key_counts, one_time_pseudoid_counts }
+        Self { one_time_key_counts, one_time_cryptoid_counts }
     }
 }
