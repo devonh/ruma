@@ -43,6 +43,9 @@ pub struct Request {
     /// Optional reason for joining the room.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+
+    /// The cryptoID for the user joining this room.
+    pub cryptoid: String,
 }
 
 /// Response type for the `join_room_by_id_or_alias` endpoint.
@@ -65,7 +68,13 @@ pub struct Response {
 impl Request {
     /// Creates a new `Request` with the given room ID or alias ID.
     pub fn new(room_id_or_alias: OwnedRoomOrAliasId) -> Self {
-        Self { room_id_or_alias, server_name: vec![], third_party_signed: None, reason: None }
+        Self {
+            room_id_or_alias,
+            server_name: vec![],
+            third_party_signed: None,
+            reason: None,
+            cryptoid: "".to_string(),
+        }
     }
 }
 
