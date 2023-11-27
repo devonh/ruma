@@ -89,8 +89,8 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "ruma_common::serde::is_default")]
     pub visibility: Visibility,
 
-    /// The senderID for the user creating this room.
-    pub sender_id: String,
+    /// The cryptoID for the user creating this room.
+    pub cryptoid: String,
 }
 
 impl From<create_room::v3::Request> for Request {
@@ -108,7 +108,7 @@ impl From<create_room::v3::Request> for Request {
             room_version: value.room_version,
             topic: value.topic,
             visibility: value.visibility,
-            sender_id: "".to_string(),
+            cryptoid: "".to_string(),
         }
     }
 }
