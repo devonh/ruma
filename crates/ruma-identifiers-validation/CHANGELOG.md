@@ -1,5 +1,20 @@
 # [unreleased]
 
+# 0.9.3
+
+Improvements:
+
+- Don't require room IDs to contain a server name
+  - Room IDs being splittable into localpart and servername does not have
+    much inherent value and there are proposals like [MSC4051] that propose
+    changing the format. Relaxing the rules makes Ruma forwards-compatible
+    with those proposals. The server_name accessor is kept because it is
+    used by at least one downstream, but is updated to return an `Option`.
+
+[MSC4051]: https://github.com/matrix-org/matrix-spec-proposals/pull/4051
+
+# 0.9.2
+
 Bug fixes:
 
 - Don't consider empty localpart of a user ID as valid
@@ -9,6 +24,8 @@ Bug fixes:
 Improvements:
 
 - Allow `+` in the localpart of user IDs according to MSC4009 / Matrix 1.8
+- Add `compat-arbitrary-length-ids` Cargo feature for opting out of 255-byte
+  length check for all ID types
 
 # 0.9.1
 

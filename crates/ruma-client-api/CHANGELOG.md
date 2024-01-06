@@ -1,11 +1,40 @@
 # [unreleased]
 
+# 0.17.4
+
+Improvements:
+
+- Change the `avatar` field of `SlidingSyncRoom` from `Option` to `JsOption`
+  - This is a breaking change, but only for users enabling the
+    `unstable-msc3575` feature
+
+# 0.17.3
+
+Bug fixes:
+
+- Fix deserialization of `claim_keys` responses without a `failures` field
+
+# 0.17.2
+
+Improvements:
+
+- Add unstable support for MSC3983
+
+# 0.17.1
+
+Improvements:
+
+- Add a ErrorKind variant for the "M_WRONG_ROOM_KEYS_VERSION" Matrix error.
+
+# 0.17.0
+
 Breaking changes:
 
 - Define `rank` as an `Option<f64>` instead of an `Option<UInt>` in
   `search::search_events::v3::SearchResult`
 - Remove the `token` field from `keys::get_keys::Request`, according to a spec clarification.
 - `SpaceRoomJoinRule` has been moved to the `space` module of the ruma-common crate
+- `backup::SessionData(Init)` were renamed to `EncryptedSessionData(Init)`
 
 Improvements:
 
@@ -391,7 +420,7 @@ Improvements:
 
 Bug fixes:
 
-* Fix (de)serialization for `r0::media::get_content_thumnail::Response`
+* Fix (de)serialization for `r0::media::get_content_thumbnail::Response`
 * Make `r0::device::get_devices::Response::devices` public
 
 Breaking changes:

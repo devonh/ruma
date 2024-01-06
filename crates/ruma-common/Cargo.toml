@@ -1,8 +1,8 @@
 [package]
 name = "ruma-common"
-version = "0.11.3"
+version = "0.12.1"
 description = "Common types for other ruma crates."
-homepage = "https://www.ruma.io/"
+homepage = "https://ruma.io/"
 keywords = ["matrix", "chat", "messaging", "ruma"]
 license = "MIT"
 readme = "README.md"
@@ -27,10 +27,14 @@ js = ["dep:js-sys", "getrandom?/js", "uuid?/js"]
 rand = ["dep:rand", "dep:uuid"]
 unstable-exhaustive-types = []
 unstable-msc2870 = []
-unstable-msc3381 = []
+unstable-msc3930 = []
 unstable-msc3931 = []
 unstable-msc3932 = ["unstable-msc3931"]
+unstable-msc3958 = []
 unstable-unspecified = []
+
+# Allow IDs to exceed 255 bytes.
+compat-arbitrary-length-ids = ["ruma-identifiers-validation/compat-arbitrary-length-ids"]
 
 # Don't validate the version part in `KeyId`.
 compat-key-id = ["ruma-identifiers-validation/compat-key-id"]

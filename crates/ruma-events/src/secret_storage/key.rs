@@ -2,9 +2,17 @@
 //!
 //! [`m.secret_storage.key.*`]: https://spec.matrix.org/latest/client-server-api/#key-storage
 
+use std::borrow::Cow;
+
 use js_int::{uint, UInt};
-use ruma_common::{serde::Base64, KeyDerivationAlgorithm};
+use ruma_common::{
+    serde::{Base64, JsonObject},
+    KeyDerivationAlgorithm,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+
+mod secret_encryption_algorithm_serde;
 
 use crate::macros::EventContent;
 
@@ -62,7 +70,7 @@ pub struct SecretStorageKeyEventContent {
     ///
     /// Currently, only `m.secret_storage.v1.aes-hmac-sha2` is supported.
     #[serde(flatten)]
-    pub algorithm: SecretEncryptionAlgorithm,
+    pub algorithm: SecretStorageEncryptionAlgorithm,
 
     /// The passphrase from which to generate the key.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,28 +79,86 @@ pub struct SecretStorageKeyEventContent {
 
 impl SecretStorageKeyEventContent {
     /// Creates a `KeyDescription` with the given name.
-    pub fn new(key_id: String, algorithm: SecretEncryptionAlgorithm) -> Self {
+    pub fn new(key_id: String, algorithm: SecretStorageEncryptionAlgorithm) -> Self {
         Self { key_id, name: None, algorithm, passphrase: None }
     }
 }
 
 /// An algorithm and its properties, used to encrypt a secret.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "algorithm")]
+#[derive(Debug, Clone)]
 #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
-pub enum SecretEncryptionAlgorithm {
-    #[serde(rename = "m.secret_storage.v1.aes-hmac-sha2")]
-    /// Encrypted using the `m.secrect_storage.v1.aes-hmac-sha2` algorithm.
+pub enum SecretStorageEncryptionAlgorithm {
+    /// Encrypted using the `m.secret_storage.v1.aes-hmac-sha2` algorithm.
     ///
     /// Secrets using this method are encrypted using AES-CTR-256 and authenticated using
     /// HMAC-SHA-256.
-    SecretStorageV1AesHmacSha2 {
-        /// The 16-byte initialization vector, encoded as base64.
-        iv: Base64,
+    V1AesHmacSha2(SecretStorageV1AesHmacSha2Properties),
 
-        /// The MAC, encoded as base64.
-        mac: Base64,
-    },
+    /// Encrypted using a custom algorithm.
+    #[doc(hidden)]
+    _Custom(CustomSecretEncryptionAlgorithm),
+}
+
+impl SecretStorageEncryptionAlgorithm {
+    /// The `algorithm` string.
+    pub fn algorithm(&self) -> &str {
+        match self {
+            Self::V1AesHmacSha2(_) => "m.secret_storage.v1.aes-hmac-sha2",
+            Self::_Custom(c) => &c.algorithm,
+        }
+    }
+
+    /// The algorithm-specific properties.
+    ///
+    /// The returned JSON object won't contain the `algorithm` field, use [`Self::algorithm()`] to
+    /// access it.
+    ///
+    /// Prefer to use the public variants of `SecretStorageEncryptionAlgorithm` where possible; this
+    /// method is meant to be used for custom algorithms only.
+    pub fn properties(&self) -> Cow<'_, JsonObject> {
+        fn serialize<T: Serialize>(obj: &T) -> JsonObject {
+            match serde_json::to_value(obj).expect("secret properties serialization to succeed") {
+                JsonValue::Object(obj) => obj,
+                _ => panic!("all secret properties must serialize to objects"),
+            }
+        }
+
+        match self {
+            Self::V1AesHmacSha2(p) => Cow::Owned(serialize(p)),
+            Self::_Custom(c) => Cow::Borrowed(&c.properties),
+        }
+    }
+}
+
+/// The key properties for the `m.secret_storage.v1.aes-hmac-sha2` algorithm.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+pub struct SecretStorageV1AesHmacSha2Properties {
+    /// The 16-byte initialization vector, encoded as base64.
+    pub iv: Base64,
+
+    /// The MAC, encoded as base64.
+    pub mac: Base64,
+}
+
+impl SecretStorageV1AesHmacSha2Properties {
+    /// Creates a new `SecretStorageV1AesHmacSha2Properties` with the given initialization vector
+    /// and MAC.
+    pub fn new(iv: Base64, mac: Base64) -> Self {
+        Self { iv, mac }
+    }
+}
+
+/// The payload for a custom secret encryption algorithm.
+#[doc(hidden)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CustomSecretEncryptionAlgorithm {
+    /// The encryption algorithm to be used for the key.
+    algorithm: String,
+
+    /// Algorithm-specific properties.
+    #[serde(flatten)]
+    properties: JsonObject,
 }
 
 #[cfg(test)]
@@ -105,17 +171,20 @@ mod tests {
         value::to_raw_value as to_raw_json_value,
     };
 
-    use super::{PassPhrase, SecretEncryptionAlgorithm, SecretStorageKeyEventContent};
+    use super::{
+        PassPhrase, SecretStorageEncryptionAlgorithm, SecretStorageKeyEventContent,
+        SecretStorageV1AesHmacSha2Properties,
+    };
     use crate::{EventContentFromType, GlobalAccountDataEvent};
 
     #[test]
-    fn test_key_description_serialization() {
+    fn key_description_serialization() {
         let mut content = SecretStorageKeyEventContent::new(
             "my_key".into(),
-            SecretEncryptionAlgorithm::SecretStorageV1AesHmacSha2 {
+            SecretStorageEncryptionAlgorithm::V1AesHmacSha2(SecretStorageV1AesHmacSha2Properties {
                 iv: Base64::parse("YWJjZGVmZ2hpamtsbW5vcA").unwrap(),
                 mac: Base64::parse("aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U").unwrap(),
-            },
+            }),
         );
         content.name = Some("my_key".to_owned());
 
@@ -130,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn test_key_description_deserialization() {
+    fn key_description_deserialization() {
         let json = to_raw_json_value(&json!({
             "name": "my_key",
             "algorithm": "m.secret_storage.v1.aes-hmac-sha2",
@@ -146,14 +215,17 @@ mod tests {
 
         assert_matches!(
             content.algorithm,
-            SecretEncryptionAlgorithm::SecretStorageV1AesHmacSha2 { iv, mac }
+            SecretStorageEncryptionAlgorithm::V1AesHmacSha2(SecretStorageV1AesHmacSha2Properties {
+                iv,
+                mac
+            })
         );
         assert_eq!(iv.encode(), "YWJjZGVmZ2hpamtsbW5vcA");
         assert_eq!(mac.encode(), "aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U");
     }
 
     #[test]
-    fn test_key_description_deserialization_without_name() {
+    fn key_description_deserialization_without_name() {
         let json = to_raw_json_value(&json!({
             "algorithm": "m.secret_storage.v1.aes-hmac-sha2",
             "iv": "YWJjZGVmZ2hpamtsbW5vcA",
@@ -168,22 +240,27 @@ mod tests {
 
         assert_matches!(
             content.algorithm,
-            SecretEncryptionAlgorithm::SecretStorageV1AesHmacSha2 { iv, mac }
+            SecretStorageEncryptionAlgorithm::V1AesHmacSha2(SecretStorageV1AesHmacSha2Properties {
+                iv,
+                mac
+            })
         );
         assert_eq!(iv.encode(), "YWJjZGVmZ2hpamtsbW5vcA");
         assert_eq!(mac.encode(), "aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U");
     }
 
     #[test]
-    fn test_key_description_with_passphrase_serialization() {
+    fn key_description_with_passphrase_serialization() {
         let mut content = SecretStorageKeyEventContent {
             passphrase: Some(PassPhrase::new("rocksalt".into(), uint!(8))),
             ..SecretStorageKeyEventContent::new(
                 "my_key".into(),
-                SecretEncryptionAlgorithm::SecretStorageV1AesHmacSha2 {
-                    iv: Base64::parse("YWJjZGVmZ2hpamtsbW5vcA").unwrap(),
-                    mac: Base64::parse("aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U").unwrap(),
-                },
+                SecretStorageEncryptionAlgorithm::V1AesHmacSha2(
+                    SecretStorageV1AesHmacSha2Properties {
+                        iv: Base64::parse("YWJjZGVmZ2hpamtsbW5vcA").unwrap(),
+                        mac: Base64::parse("aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U").unwrap(),
+                    },
+                ),
             )
         };
         content.name = Some("my_key".to_owned());
@@ -204,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn test_key_description_with_passphrase_deserialization() {
+    fn key_description_with_passphrase_deserialization() {
         let json = to_raw_json_value(&json!({
             "name": "my_key",
             "algorithm": "m.secret_storage.v1.aes-hmac-sha2",
@@ -231,20 +308,23 @@ mod tests {
 
         assert_matches!(
             content.algorithm,
-            SecretEncryptionAlgorithm::SecretStorageV1AesHmacSha2 { iv, mac }
+            SecretStorageEncryptionAlgorithm::V1AesHmacSha2(SecretStorageV1AesHmacSha2Properties {
+                iv,
+                mac
+            })
         );
         assert_eq!(iv.encode(), "YWJjZGVmZ2hpamtsbW5vcA");
         assert_eq!(mac.encode(), "aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U");
     }
 
     #[test]
-    fn test_event_serialization() {
+    fn event_serialization() {
         let mut content = SecretStorageKeyEventContent::new(
             "my_key_id".into(),
-            SecretEncryptionAlgorithm::SecretStorageV1AesHmacSha2 {
+            SecretStorageEncryptionAlgorithm::V1AesHmacSha2(SecretStorageV1AesHmacSha2Properties {
                 iv: Base64::parse("YWJjZGVmZ2hpamtsbW5vcA").unwrap(),
                 mac: Base64::parse("aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U").unwrap(),
-            },
+            }),
         );
         content.name = Some("my_key".to_owned());
 
@@ -259,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn test_event_deserialization() {
+    fn event_deserialization() {
         let json = json!({
             "type": "m.secret_storage.key.my_key_id",
             "content": {
@@ -278,9 +358,41 @@ mod tests {
 
         assert_matches!(
             ev.content.algorithm,
-            SecretEncryptionAlgorithm::SecretStorageV1AesHmacSha2 { iv, mac }
+            SecretStorageEncryptionAlgorithm::V1AesHmacSha2(SecretStorageV1AesHmacSha2Properties {
+                iv,
+                mac
+            })
         );
         assert_eq!(iv.encode(), "YWJjZGVmZ2hpamtsbW5vcA");
         assert_eq!(mac.encode(), "aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U");
+    }
+
+    #[test]
+    fn custom_algorithm_key_description_deserialization() {
+        let json = to_raw_json_value(&json!({
+            "name": "my_key",
+            "algorithm": "io.ruma.custom_alg",
+            "io.ruma.custom_prop1": "YWJjZGVmZ2hpamtsbW5vcA",
+            "io.ruma.custom_prop2": "aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U"
+        }))
+        .unwrap();
+
+        let content =
+            SecretStorageKeyEventContent::from_parts("m.secret_storage.key.test", &json).unwrap();
+        assert_eq!(content.name.unwrap(), "my_key");
+        assert_matches!(content.passphrase, None);
+
+        let algorithm = content.algorithm;
+        assert_eq!(algorithm.algorithm(), "io.ruma.custom_alg");
+        let properties = algorithm.properties();
+        assert_eq!(properties.len(), 2);
+        assert_eq!(
+            properties.get("io.ruma.custom_prop1").unwrap().as_str(),
+            Some("YWJjZGVmZ2hpamtsbW5vcA")
+        );
+        assert_eq!(
+            properties.get("io.ruma.custom_prop2").unwrap().as_str(),
+            Some("aWRvbnRrbm93d2hhdGFtYWNsb29rc2xpa2U")
+        );
     }
 }

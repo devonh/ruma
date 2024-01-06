@@ -1,5 +1,5 @@
-#![doc(html_favicon_url = "https://www.ruma.io/favicon.ico")]
-#![doc(html_logo_url = "https://www.ruma.io/images/logo.png")]
+#![doc(html_favicon_url = "https://ruma.io/favicon.ico")]
+#![doc(html_logo_url = "https://ruma.io/images/logo.png")]
 //! Procedural macros used by ruma crates.
 //!
 //! See the documentation for the individual macros for usage details.
@@ -76,8 +76,8 @@ use self::{
 /// }
 /// ```
 /// (The enum name has to be a valid identifier for `<EventKind as Parse>::parse`)
-//// TODO: Change above (`<EventKind as Parse>::parse`) to [] after fully qualified syntax is
-//// supported:  https://github.com/rust-lang/rust/issues/74563
+///// TODO: Change above (`<EventKind as Parse>::parse`) to [] after fully qualified syntax is
+///// supported:  https://github.com/rust-lang/rust/issues/74563
 #[proc_macro]
 pub fn event_enum(input: TokenStream) -> TokenStream {
     let event_enum_input = syn::parse_macro_input!(input as EventEnumInput);

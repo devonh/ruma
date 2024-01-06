@@ -5,18 +5,22 @@
 use std::borrow::Cow;
 
 use ruma_common::{
-    serde::{JsonObject, StringEnum},
-    EventId,
+    serde::{JsonObject, Raw, StringEnum},
+    OwnedEventId, RoomId,
 };
 #[cfg(feature = "html")]
 use ruma_html::{sanitize_html, HtmlSanitizerMode, RemoveReplyFallback};
 use ruma_macros::EventContent;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use tracing::warn;
 
+use self::reply::OriginalEventData;
+#[cfg(feature = "html")]
+use self::sanitize::remove_plain_reply_fallback;
 use crate::{
-    relation::{CustomRelation, InReplyTo, RelationType, Replacement, Thread},
-    Mentions, PrivOwnedStr,
+    relation::{InReplyTo, Replacement, Thread},
+    AnySyncTimelineEvent, Mentions, PrivOwnedStr,
 };
 
 mod audio;
@@ -27,26 +31,34 @@ mod image;
 mod key_verification_request;
 mod location;
 mod notice;
+mod relation;
 pub(crate) mod relation_serde;
 mod reply;
 pub mod sanitize;
 mod server_notice;
 mod text;
 mod video;
+mod without_relation;
 
-pub use audio::{AudioInfo, AudioMessageEventContent};
-pub use emote::EmoteMessageEventContent;
-pub use file::{FileInfo, FileMessageEventContent};
-pub use image::ImageMessageEventContent;
-pub use key_verification_request::KeyVerificationRequestEventContent;
-pub use location::{LocationInfo, LocationMessageEventContent};
-pub use notice::NoticeMessageEventContent;
-pub use relation_serde::deserialize_relation;
-#[cfg(feature = "html")]
-use sanitize::remove_plain_reply_fallback;
-pub use server_notice::{LimitType, ServerNoticeMessageEventContent, ServerNoticeType};
-pub use text::TextMessageEventContent;
-pub use video::{VideoInfo, VideoMessageEventContent};
+#[cfg(feature = "unstable-msc3245-v1-compat")]
+pub use self::audio::{
+    UnstableAmplitude, UnstableAudioDetailsContentBlock, UnstableVoiceContentBlock,
+};
+pub use self::{
+    audio::{AudioInfo, AudioMessageEventContent},
+    emote::EmoteMessageEventContent,
+    file::{FileInfo, FileMessageEventContent},
+    image::ImageMessageEventContent,
+    key_verification_request::KeyVerificationRequestEventContent,
+    location::{LocationInfo, LocationMessageEventContent},
+    notice::NoticeMessageEventContent,
+    relation::{Relation, RelationWithoutReplacement},
+    relation_serde::deserialize_relation,
+    server_notice::{LimitType, ServerNoticeMessageEventContent, ServerNoticeType},
+    text::TextMessageEventContent,
+    video::{VideoInfo, VideoMessageEventContent},
+    without_relation::RoomMessageEventContentWithoutRelation,
+};
 
 /// The content of an `m.room.message` event.
 ///
@@ -147,77 +159,47 @@ impl RoomMessageEventContent {
     /// Panics if `self` has a `formatted_body` with a format other than HTML.
     #[track_caller]
     pub fn make_reply_to(
-        mut self,
+        self,
         original_message: &OriginalRoomMessageEvent,
         forward_thread: ForwardThread,
         add_mentions: AddMentions,
     ) -> Self {
-        let empty_formatted_body = || FormattedBody::html(String::new());
+        self.without_relation().make_reply_to(original_message, forward_thread, add_mentions)
+    }
 
-        let (body, formatted) = {
-            match &mut self.msgtype {
-                MessageType::Emote(m) => {
-                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
-                }
-                MessageType::Notice(m) => {
-                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
-                }
-                MessageType::Text(m) => {
-                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
-                }
-                MessageType::Audio(m) => (&mut m.body, None),
-                MessageType::File(m) => (&mut m.body, None),
-                MessageType::Image(m) => (&mut m.body, None),
-                MessageType::Location(m) => (&mut m.body, None),
-                MessageType::ServerNotice(m) => (&mut m.body, None),
-                MessageType::Video(m) => (&mut m.body, None),
-                MessageType::VerificationRequest(m) => (&mut m.body, None),
-                MessageType::_Custom(m) => (&mut m.body, None),
-            }
-        };
-
-        if let Some(f) = formatted {
-            assert_eq!(
-                f.format,
-                MessageFormat::Html,
-                "make_reply_to can't handle non-HTML formatted messages"
-            );
-
-            let formatted_body = &mut f.body;
-
-            (*body, *formatted_body) = reply::plain_and_formatted_reply_body(
-                body.as_str(),
-                (!formatted_body.is_empty()).then_some(formatted_body.as_str()),
-                original_message,
-            );
-        }
-
-        let relates_to = if let Some(Relation::Thread(Thread { event_id, .. })) = original_message
-            .content
-            .relates_to
-            .as_ref()
-            .filter(|_| forward_thread == ForwardThread::Yes)
-        {
-            Relation::Thread(Thread::plain(event_id.clone(), original_message.event_id.clone()))
-        } else {
-            Relation::Reply {
-                in_reply_to: InReplyTo { event_id: original_message.event_id.clone() },
-            }
-        };
-        self.relates_to = Some(relates_to);
-
-        if add_mentions == AddMentions::Yes {
-            // Copy the mentioned users.
-            let mut user_ids = match &original_message.content.mentions {
-                Some(m) => m.user_ids.clone(),
-                None => Default::default(),
-            };
-            // Add the sender.
-            user_ids.insert(original_message.sender.clone());
-            self.mentions = Some(Mentions { user_ids, ..Default::default() });
-        }
-
-        self
+    /// Turns `self` into a reply to the given raw event.
+    ///
+    /// Takes the `body` / `formatted_body` (if any) in `self` for the main text and prepends a
+    /// quoted version of the `body` of `original_event` (if any). Also sets the `in_reply_to` field
+    /// inside `relates_to`, and optionally the `rel_type` to `m.thread` if the
+    /// `original_message is in a thread and thread forwarding is enabled.
+    ///
+    /// It is recommended to use [`Self::make_reply_to()`] for replies to `m.room.message` events,
+    /// as the generated fallback is better for some `msgtype`s.
+    ///
+    /// Note that except for the panic below, this is infallible. Which means that if a field is
+    /// missing when deserializing the data, the changes that require it will not be applied. It
+    /// will still at least apply the `m.in_reply_to` relation to this content.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` has a `formatted_body` with a format other than HTML.
+    #[track_caller]
+    pub fn make_reply_to_raw(
+        self,
+        original_event: &Raw<AnySyncTimelineEvent>,
+        original_event_id: OwnedEventId,
+        room_id: &RoomId,
+        forward_thread: ForwardThread,
+        add_mentions: AddMentions,
+    ) -> Self {
+        self.without_relation().make_reply_to_raw(
+            original_event,
+            original_event_id,
+            room_id,
+            forward_thread,
+            add_mentions,
+        )
     }
 
     /// Turns `self` into a new message for a thread, that is optionally a reply.
@@ -262,7 +244,11 @@ impl RoomMessageEventContent {
         self
     }
 
-    /// Turns `self` into a [replacement] (or edit) for the message with the given event ID.
+    /// Turns `self` into a [replacement] (or edit) for a given message.
+    ///
+    /// The first argument after `self` can be `&OriginalRoomMessageEvent` or
+    /// `&OriginalSyncRoomMessageEvent` if you don't want to create `ReplacementMetadata` separately
+    /// before calling this function.
     ///
     /// This takes the content and sets it in `m.new_content`, and modifies the `content` to include
     /// a fallback.
@@ -285,54 +271,21 @@ impl RoomMessageEventContent {
     #[track_caller]
     pub fn make_replacement(
         mut self,
-        original_message: &OriginalSyncRoomMessageEvent,
+        metadata: impl Into<ReplacementMetadata>,
         replied_to_message: Option<&OriginalRoomMessageEvent>,
     ) -> Self {
+        let metadata = metadata.into();
+
         // Prepare relates_to with the untouched msgtype.
         let relates_to = Relation::Replacement(Replacement {
-            event_id: original_message.event_id.clone(),
+            event_id: metadata.event_id,
             new_content: RoomMessageEventContentWithoutRelation {
                 msgtype: self.msgtype.clone(),
-                mentions: original_message.content.mentions.clone(),
+                mentions: metadata.mentions,
             },
         });
 
-        let empty_formatted_body = || FormattedBody::html(String::new());
-
-        let (body, formatted) = {
-            match &mut self.msgtype {
-                MessageType::Emote(m) => {
-                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
-                }
-                MessageType::Notice(m) => {
-                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
-                }
-                MessageType::Text(m) => {
-                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
-                }
-                MessageType::Audio(m) => (&mut m.body, None),
-                MessageType::File(m) => (&mut m.body, None),
-                MessageType::Image(m) => (&mut m.body, None),
-                MessageType::Location(m) => (&mut m.body, None),
-                MessageType::ServerNotice(m) => (&mut m.body, None),
-                MessageType::Video(m) => (&mut m.body, None),
-                MessageType::VerificationRequest(m) => (&mut m.body, None),
-                MessageType::_Custom(m) => (&mut m.body, None),
-            }
-        };
-
-        // Add replacement fallback.
-        *body = format!("* {body}");
-
-        if let Some(f) = formatted {
-            assert_eq!(
-                f.format,
-                MessageFormat::Html,
-                "make_replacement can't handle non-HTML formatted messages"
-            );
-
-            f.body = format!("* {}", f.body);
-        }
+        self.msgtype.make_replacement_body();
 
         // Add reply fallback if needed.
         if let Some(original_message) = replied_to_message {
@@ -397,13 +350,7 @@ impl RoomMessageEventContent {
     ///
     /// [mentions]: https://spec.matrix.org/latest/client-server-api/#user-and-room-mentions
     pub fn add_mentions(mut self, mentions: Mentions) -> Self {
-        if let Some(m) = &mut self.mentions {
-            m.user_ids.extend(mentions.user_ids);
-            m.room |= mentions.room;
-        } else {
-            self.mentions = Some(mentions);
-        }
-
+        self.mentions.get_or_insert_with(Mentions::new).add(mentions);
         self
     }
 
@@ -418,6 +365,13 @@ impl RoomMessageEventContent {
     /// Return a reference to the message body.
     pub fn body(&self) -> &str {
         self.msgtype.body()
+    }
+
+    /// Apply the given new content from a [`Replacement`] to this message.
+    pub fn apply_replacement(&mut self, new_content: RoomMessageEventContentWithoutRelation) {
+        let RoomMessageEventContentWithoutRelation { msgtype, mentions } = new_content;
+        self.msgtype = msgtype;
+        self.mentions = mentions;
     }
 
     /// Sanitize this message.
@@ -446,51 +400,13 @@ impl RoomMessageEventContent {
 
         self.msgtype.sanitize(mode, remove_reply_fallback);
     }
-}
 
-/// Form of [`RoomMessageEventContent`] without relation.
-#[derive(Clone, Debug, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
-pub struct RoomMessageEventContentWithoutRelation {
-    /// A key which identifies the type of message being sent.
-    ///
-    /// This also holds the specific content of each message.
-    #[serde(flatten)]
-    pub msgtype: MessageType,
+    fn without_relation(self) -> RoomMessageEventContentWithoutRelation {
+        if self.relates_to.is_some() {
+            warn!("Overwriting existing relates_to value");
+        }
 
-    /// The [mentions] of this event.
-    ///
-    /// [mentions]: https://spec.matrix.org/latest/client-server-api/#user-and-room-mentions
-    #[serde(rename = "m.mentions", skip_serializing_if = "Option::is_none")]
-    pub mentions: Option<Mentions>,
-}
-
-impl RoomMessageEventContentWithoutRelation {
-    /// Creates a new `RoomMessageEventContentWithoutRelation` with the given `MessageType`.
-    pub fn new(msgtype: MessageType) -> Self {
-        Self { msgtype, mentions: None }
-    }
-
-    /// Transform `self` into a `RoomMessageEventContent` with the given relation.
-    pub fn with_relation(
-        self,
-        relates_to: Option<Relation<RoomMessageEventContentWithoutRelation>>,
-    ) -> RoomMessageEventContent {
-        let Self { msgtype, mentions } = self;
-        RoomMessageEventContent { msgtype, relates_to, mentions }
-    }
-}
-
-impl From<MessageType> for RoomMessageEventContentWithoutRelation {
-    fn from(msgtype: MessageType) -> Self {
-        Self::new(msgtype)
-    }
-}
-
-impl From<RoomMessageEventContent> for RoomMessageEventContentWithoutRelation {
-    fn from(value: RoomMessageEventContent) -> Self {
-        let RoomMessageEventContent { msgtype, mentions, .. } = value;
-        Self { msgtype, mentions }
+        self.into()
     }
 }
 
@@ -520,8 +436,7 @@ pub enum AddMentions {
     ///
     /// Set this if your client supports intentional mentions.
     ///
-    /// The sender of the original event will be added to the mentions of this message, along with
-    /// every user mentioned in the original event.
+    /// The sender of the original event will be added to the mentions of this message.
     Yes,
 
     /// Do not add intentional mentions to the reply.
@@ -776,6 +691,88 @@ impl MessageType {
             }
         }
     }
+
+    #[track_caller]
+    fn add_reply_fallback(&mut self, original_event: OriginalEventData<'_>) {
+        let empty_formatted_body = || FormattedBody::html(String::new());
+
+        let (body, formatted) = {
+            match self {
+                MessageType::Emote(m) => {
+                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
+                }
+                MessageType::Notice(m) => {
+                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
+                }
+                MessageType::Text(m) => {
+                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
+                }
+                MessageType::Audio(m) => (&mut m.body, None),
+                MessageType::File(m) => (&mut m.body, None),
+                MessageType::Image(m) => (&mut m.body, None),
+                MessageType::Location(m) => (&mut m.body, None),
+                MessageType::ServerNotice(m) => (&mut m.body, None),
+                MessageType::Video(m) => (&mut m.body, None),
+                MessageType::VerificationRequest(m) => (&mut m.body, None),
+                MessageType::_Custom(m) => (&mut m.body, None),
+            }
+        };
+
+        if let Some(f) = formatted {
+            assert_eq!(
+                f.format,
+                MessageFormat::Html,
+                "can't add reply fallback to non-HTML formatted messages"
+            );
+
+            let formatted_body = &mut f.body;
+
+            (*body, *formatted_body) = reply::plain_and_formatted_reply_body(
+                body.as_str(),
+                (!formatted_body.is_empty()).then_some(formatted_body.as_str()),
+                original_event,
+            );
+        }
+    }
+
+    fn make_replacement_body(&mut self) {
+        let empty_formatted_body = || FormattedBody::html(String::new());
+
+        let (body, formatted) = {
+            match self {
+                MessageType::Emote(m) => {
+                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
+                }
+                MessageType::Notice(m) => {
+                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
+                }
+                MessageType::Text(m) => {
+                    (&mut m.body, Some(m.formatted.get_or_insert_with(empty_formatted_body)))
+                }
+                MessageType::Audio(m) => (&mut m.body, None),
+                MessageType::File(m) => (&mut m.body, None),
+                MessageType::Image(m) => (&mut m.body, None),
+                MessageType::Location(m) => (&mut m.body, None),
+                MessageType::ServerNotice(m) => (&mut m.body, None),
+                MessageType::Video(m) => (&mut m.body, None),
+                MessageType::VerificationRequest(m) => (&mut m.body, None),
+                MessageType::_Custom(m) => (&mut m.body, None),
+            }
+        };
+
+        // Add replacement fallback.
+        *body = format!("* {body}");
+
+        if let Some(f) = formatted {
+            assert_eq!(
+                f.format,
+                MessageFormat::Html,
+                "make_replacement can't handle non-HTML formatted messages"
+            );
+
+            f.body = format!("* {}", f.body);
+        }
+    }
 }
 
 impl From<MessageType> for RoomMessageEventContent {
@@ -790,70 +787,31 @@ impl From<RoomMessageEventContent> for MessageType {
     }
 }
 
-/// Message event relationship.
-#[derive(Clone, Debug)]
-#[allow(clippy::manual_non_exhaustive)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
-pub enum Relation<C> {
-    /// An `m.in_reply_to` relation indicating that the event is a reply to another event.
-    Reply {
-        /// Information about another message being replied to.
-        in_reply_to: InReplyTo,
-    },
-
-    /// An event that replaces another event.
-    Replacement(Replacement<C>),
-
-    /// An event that belongs to a thread.
-    Thread(Thread),
-
-    #[doc(hidden)]
-    _Custom(CustomRelation),
+/// Metadata about an event to be replaced.
+///
+/// To be used with [`RoomMessageEventContent::make_replacement`].
+#[derive(Debug)]
+pub struct ReplacementMetadata {
+    event_id: OwnedEventId,
+    mentions: Option<Mentions>,
 }
 
-impl<C> Relation<C> {
-    /// The type of this `Relation`.
-    ///
-    /// Returns an `Option` because the `Reply` relation does not have a`rel_type` field.
-    pub fn rel_type(&self) -> Option<RelationType> {
-        match self {
-            Relation::Reply { .. } => None,
-            Relation::Replacement(_) => Some(RelationType::Replacement),
-            Relation::Thread(_) => Some(RelationType::Thread),
-            Relation::_Custom(c) => Some(c.rel_type.as_str().into()),
-        }
+impl ReplacementMetadata {
+    /// Creates a new `ReplacementMetadata` with the given event ID and mentions.
+    pub fn new(event_id: OwnedEventId, mentions: Option<Mentions>) -> Self {
+        Self { event_id, mentions }
     }
+}
 
-    /// The ID of the event this relates to.
-    ///
-    /// This is the `event_id` field at the root of an `m.relates_to` object, except in the case of
-    /// a reply relation where it's the `event_id` field in the `m.in_reply_to` object.
-    pub fn event_id(&self) -> &EventId {
-        match self {
-            Relation::Reply { in_reply_to } => &in_reply_to.event_id,
-            Relation::Replacement(r) => &r.event_id,
-            Relation::Thread(t) => &t.event_id,
-            Relation::_Custom(c) => &c.event_id,
-        }
+impl From<&OriginalRoomMessageEvent> for ReplacementMetadata {
+    fn from(value: &OriginalRoomMessageEvent) -> Self {
+        ReplacementMetadata::new(value.event_id.to_owned(), value.content.mentions.clone())
     }
+}
 
-    /// The associated data.
-    ///
-    /// The returned JSON object won't contain the `rel_type` field, use
-    /// [`.rel_type()`][Self::rel_type] to access it. It also won't contain data
-    /// outside of `m.relates_to` (e.g. `m.new_content` for `m.replace` relations).
-    ///
-    /// Prefer to use the public variants of `Relation` where possible; this method is meant to
-    /// be used for custom relations only.
-    pub fn data(&self) -> Cow<'_, JsonObject>
-    where
-        C: Clone,
-    {
-        if let Relation::_Custom(c) = self {
-            Cow::Borrowed(&c.data)
-        } else {
-            Cow::Owned(self.serialize_data())
-        }
+impl From<&OriginalSyncRoomMessageEvent> for ReplacementMetadata {
+    fn from(value: &OriginalSyncRoomMessageEvent) -> Self {
+        ReplacementMetadata::new(value.event_id.to_owned(), value.content.mentions.clone())
     }
 }
 
